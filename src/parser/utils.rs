@@ -40,7 +40,11 @@ where
     while initial_size + num_read < reader.capacity() {
         match reader.read_into_buf() {
             Ok(0) => break,
-            Ok(n) => num_read += n,
+            Ok(n) =>
+                {
+                    println!("read into: {}", n);
+                    num_read += n
+                },
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
         }

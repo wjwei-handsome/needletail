@@ -34,11 +34,8 @@ fn get_fastx_reader<'a, R: 'a + io::Read + Send>(
     reader: R,
     first_byte: u8,
 ) -> Result<Box<dyn FastxReader + 'a>, ParseError> {
-    match first_byte {
-        b'>' => Ok(Box::new(FastaReader::new(reader))),
-        b'@' => Ok(Box::new(FastqReader::new(reader))),
-        _ => Err(ParseError::new_unknown_format(first_byte)),
-    }
+    //
+    todo!()
 }
 
 /// The main entry point of needletail if you're reading from something that implements [`std::io::Read`].

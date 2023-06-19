@@ -10,7 +10,7 @@ use memchr::{memchr2, Memchr};
 use std::borrow::Cow;
 use std::fs::File;
 use std::io;
-use std::io::BufRead;
+use std::io::{BufRead, Seek, SeekFrom};
 use std::path::Path;
 
 #[derive(Clone, Debug)]
@@ -119,7 +119,7 @@ impl BufferPosition {
 /// Only use this directly if you know your file is FASTA and that it is not compressed as
 /// it does not handle decompression.
 /// If you are unsure, it's better to use [parse_fastx_file](fn.parse_fastx_file.html).
-pub struct Reader<R: io::Read> {
+pub struct Reader<R: io::Read + io::Seek> {
     buf_reader: buffer_redux::BufReader<R>,
     buf_pos: BufferPosition,
     search_pos: usize,
@@ -128,9 +128,34 @@ pub struct Reader<R: io::Read> {
     line_ending: Option<LineEnding>,
 }
 
+/// impl a seek method for Reader:
+impl Seek for Reader<File> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let new_pos = match pos {
+            SeekFrom::Start(n) => n as i64,
+            SeekFrom::End(n) => self.buf_reader.get_ref().metadata()?.len() as i64 + n,
+            SeekFrom::Current(n) => self.position.byte as i64 + n,
+        };
+        if new_pos < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid seek to a negative position",
+            ));
+        }
+        self.buf_reader.seek(SeekFrom::Start(new_pos as u64))?;
+        self.buf_pos.reset(0);
+        self.search_pos = 0;
+        self.position = Position::new(new_pos as u64, 0);
+        self.finished = false;
+        Ok(new_pos as u64)
+    }
+}
+
+
+
 impl<R> Reader<R>
 where
-    R: io::Read,
+    R: io::Read + io::Seek,
 {
     /// Creates a new reader with the default buffer size of 64 KiB
     ///
@@ -146,6 +171,7 @@ where
     /// ```
     #[inline]
     pub fn new(reader: R) -> Reader<R> {
+        println!("prepare a reader in {}", BUFSIZE);
         Reader::with_capacity(reader, BUFSIZE)
     }
 
@@ -188,7 +214,7 @@ impl Reader<File> {
 
 impl<R> Reader<R>
 where
-    R: io::Read,
+    R: io::Read + io::Seek,
 {
     #[inline]
     fn get_buf(&self) -> &[u8] {
@@ -295,8 +321,8 @@ where
     }
 }
 
-impl<R: io::Read + Send> FastxReader for Reader<R> {
-    fn next(&mut self) -> Option<Result<SequenceRecord, ParseError>> {
+impl<R: io::Read + Send + io::Seek> Reader<R> {
+    pub fn next(&mut self) -> Option<Result<SequenceRecord, ParseError>> {
         if self.finished {
             return None;
         }
@@ -305,6 +331,7 @@ impl<R: io::Read + Send> FastxReader for Reader<R> {
         if self.position.line == 0 {
             match fill_buf(&mut self.buf_reader) {
                 Ok(n) => {
+                    println!("n: {}", n);
                     if n == 0 {
                         self.finished = true;
                         return None;
@@ -320,7 +347,8 @@ impl<R: io::Read + Send> FastxReader for Reader<R> {
                 self.position.byte = 0;
                 self.buf_pos.start = 0;
                 self.search_pos = 1;
-            } else {
+            }
+            else {
                 return Some(Err(ParseError::new_invalid_start(
                     self.get_buf()[0],
                     ErrorPosition {
@@ -334,6 +362,8 @@ impl<R: io::Read + Send> FastxReader for Reader<R> {
 
         if !self.buf_pos.is_new() {
             self.next_pos();
+        } else {
+            println!("here buf_pos is new")
         }
 
         // Can we identify the start of the next record ?
